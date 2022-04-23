@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use clap::Parser;
 use walkdir::{DirEntry, WalkDir};
@@ -25,18 +25,32 @@ fn main() {
         ("package.json", "npm"),
         ("package-lock.json", "npm"),
         ("yarn.lock", "npm"),
-        ("docker", "Dockerfile"),
+        ("Dockerfile", "docker"),
         ("Cargo.toml", "cargo"),
         ("requirements.txt", "pip"),
         ("pyproject.toml", "pip"),
         ("poetry.lock", "pip"),
     ]);
 
-    WalkDir::new(args.path)
+    let mut found: HashSet<String> = HashSet::new();
+
+    for entry in WalkDir::new(args.path)
         .follow_links(true)
         .into_iter()
         .filter_map(|entry| entry.ok())
         .filter(|entry| is_target(&mapping, &entry))
-        .map(|f| println!("Found {}", f.file_name().to_str().unwrap()))
-        .collect::<()>();
+    {
+        let found_target = entry.file_name().to_str().unwrap();
+        let found_for = mapping.get(found_target).unwrap();
+        found.insert(found_for.to_string());
+    }
+
+    println!(
+        "Found package managers: {}.",
+        found
+            .into_iter()
+            .map(String::from)
+            .collect::<Vec<String>>()
+            .join(", ")
+    );
 }
