@@ -47,9 +47,9 @@ fn main() {
     for entry in WalkDir::new(args.path)
         .follow_links(true)
         .into_iter()
-        .filter_entry(|entry| !is_ignored(&ignored_dirs, &entry))
+        .filter_entry(|entry| !is_ignored(&ignored_dirs, entry))
         .filter_map(|entry| entry.ok())
-        .filter(|entry| is_target(&mapping, &entry))
+        .filter(|entry| is_target(&mapping, entry))
     {
         let found_target = entry.file_name().to_str().unwrap();
         let found_for = mapping.get(found_target).unwrap();
