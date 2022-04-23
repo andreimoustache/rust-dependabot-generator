@@ -24,6 +24,17 @@
 				"isDefault": true
 			},
 			"label": "Rust: cargo check"
+		},
+		{
+			"type": "cargo",
+			"subcommand": "test",
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": {
+				"kind": "build",
+			},
+			"label": "Rust: cargo test"
 		}
 	]
 }

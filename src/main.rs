@@ -75,3 +75,21 @@ fn main() {
             .join(", ")
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::is_ignored;
+    use std::collections::HashSet;
+    use walkdir::WalkDir;
+
+    #[test]
+    fn is_ignored_test() {
+        let ignored = HashSet::from(["README.md"]);
+        for entry in WalkDir::new("README.md")
+            .into_iter()
+            .filter_map(|entry| entry.ok())
+        {
+            assert!(is_ignored(&ignored, &entry));
+        }
+    }
+}
