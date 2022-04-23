@@ -17,6 +17,14 @@ fn is_target(mapping: &HashMap<&str, &str>, entry: &DirEntry) -> bool {
         .unwrap_or(false);
 }
 
+fn is_ignored(ignored_dirs: &HashSet<&str>, entry: &DirEntry) -> bool {
+    return entry
+        .file_name()
+        .to_str()
+        .map(|s| ignored_dirs.contains(s))
+        .unwrap_or(false);
+}
+
 fn main() {
     let args = Cli::parse();
     println!("Scanning directory {}.", args.path.to_str().unwrap());
@@ -32,11 +40,14 @@ fn main() {
         ("poetry.lock", "pip"),
     ]);
 
+    let ignored_dirs = HashSet::from([".git", "target"]);
+
     let mut found: HashSet<String> = HashSet::new();
 
     for entry in WalkDir::new(args.path)
         .follow_links(true)
         .into_iter()
+        .filter_entry(|entry| !is_ignored(&ignored_dirs, &entry))
         .filter_map(|entry| entry.ok())
         .filter(|entry| is_target(&mapping, &entry))
     {
