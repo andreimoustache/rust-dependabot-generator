@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use clap::Parser;
 use walkdir::{DirEntry, WalkDir};
@@ -69,6 +69,18 @@ fn main() {
     let walk_dir = WalkDir::new(args.path);
     let found = find_targets(mapping, ignored_dirs, walk_dir);
 
+    let mut default_config = BTreeMap::from([
+        ("directory", "/"),
+        ("target-branch", "main"),
+        ("schedule", ""),
+    ]);
+    //default_config = {
+    //"directory": "/",
+    //"target-branch": "staging",
+    // "schedule": {"interval": "weekly"},
+    // "labels": ["automerge"],
+    // }
+    //
     println!(
         "Found package managers: {}.",
         found
