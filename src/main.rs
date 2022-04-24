@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use clap::Parser;
+use dependabot_config::v2::PackageEcosystem;
 use walkdir::{DirEntry, WalkDir};
 
 #[derive(Parser)]
@@ -9,7 +10,7 @@ struct Cli {
     path: std::path::PathBuf,
 }
 
-fn is_target(mapping: &HashMap<String, String>, entry: &DirEntry) -> bool {
+fn is_target(mapping: &HashMap<String, PackageEcosystem>, entry: &DirEntry) -> bool {
     return entry
         .file_name()
         .to_str()
@@ -26,7 +27,7 @@ fn is_ignored(ignored_dirs: &HashSet<String>, entry: &DirEntry) -> bool {
 }
 
 fn find_targets(
-    mapping: HashMap<String, String>,
+    mapping: HashMap<String, PackageEcosystem>,
     ignored_dirs: HashSet<String>,
     walk: WalkDir,
 ) -> HashSet<String> {
@@ -54,16 +55,16 @@ fn main() {
     let ignored_dirs = HashSet::from([".git", "target"].map(|s| s.to_string()));
     let mapping = HashMap::from(
         [
-            ("package.json", "npm"),
-            ("package-lock.json", "npm"),
-            ("yarn.lock", "npm"),
-            ("Dockerfile", "docker"),
-            ("Cargo.toml", "cargo"),
-            ("requirements.txt", "pip"),
-            ("pyproject.toml", "pip"),
-            ("poetry.lock", "pip"),
+            ("package.json", PackageEcosystem::Npm),
+            ("package-lock.json", PackageEcosystem::Npm),
+            ("yarn.lock", PackageEcosystem::Npm),
+            ("Dockerfile", PackageEcosystem::Docker),
+            ("Cargo.toml", PackageEcosystem::Cargo),
+            ("requirements.txt", PackageEcosystem::Pip),
+            ("pyproject.toml", PackageEcosystem::Pip),
+            ("poetry.lock", PackageEcosystem::Pip),
         ]
-        .map(|p| (p.0.to_string(), p.1.to_string())),
+        .map(|p| (p.0.to_string(), p.1)),
     );
 
     let walk_dir = WalkDir::new(args.path);
