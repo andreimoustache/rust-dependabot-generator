@@ -1,7 +1,16 @@
 [package]
 name = "dependabot-generator"
+description = "Scans directories and generates a dependabot config based on found package manager files."
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
+repository = "https://github.com/andreimoustache/rust-dependabot-generator"
+homepage = "https://github.com/andreimoustache/rust-dependabot-generator"
+readme = "README.md"
+exclude = [
+  ".github",
+  ".vscode"
+]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
