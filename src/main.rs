@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use clap::Parser;
+use dependabot_config::v2::{Dependabot, PackageEcosystem, Schedule, Update};
 use walkdir::{DirEntry, WalkDir};
 
 #[derive(Parser)]
@@ -9,7 +10,7 @@ struct Cli {
     path: std::path::PathBuf,
 }
 
-fn is_target(mapping: &HashMap<String, String>, entry: &DirEntry) -> bool {
+fn is_target(mapping: &HashMap<String, PackageEcosystem>, entry: &DirEntry) -> bool {
     return entry
         .file_name()
         .to_str()
@@ -25,55 +26,92 @@ fn is_ignored(ignored_dirs: &HashSet<String>, entry: &DirEntry) -> bool {
         .unwrap_or(false);
 }
 
+struct FoundTarget {
+    ecosystem: Option<PackageEcosystem>,
+    path: Option<String>,
+    file_name: Option<String>,
+}
+
 fn find_targets(
-    mapping: HashMap<String, String>,
+    mapping: HashMap<String, PackageEcosystem>,
     ignored_dirs: HashSet<String>,
     walk: WalkDir,
-) -> HashSet<String> {
-    let mut found: HashSet<String> = HashSet::new();
-
-    for found_target in walk
-        .follow_links(true)
+    root: String,
+) -> Vec<FoundTarget> {
+    walk.follow_links(true)
         .into_iter()
         .filter_entry(|entry| !is_ignored(&ignored_dirs, entry))
         .filter_map(|entry| entry.ok())
         .filter(|entry| is_target(&mapping, entry))
-        .filter_map(|entry| entry.file_name().to_str().map(|s| s.to_string()))
-    {
-        let found_for = mapping.get(&found_target).unwrap();
-        found.insert(found_for.to_string());
-    }
+        .map(|entry| FoundTarget {
+            file_name: entry.file_name().to_str().map(String::from),
+            path: entry
+                .path()
+                .strip_prefix(root.clone())
+                .unwrap()
+                .as_os_str()
+                .to_str()
+                .map(String::from),
+            ecosystem: Some(
+                *mapping
+                    .get(&entry.file_name().to_str().map(String::from).unwrap())
+                    .unwrap(),
+            ),
+        })
+        .collect()
+}
 
-    found
+fn found_to_update(found_target: &FoundTarget) -> Update {
+    Update::new(
+        found_target.ecosystem.unwrap().to_owned(),
+        found_target.path.as_ref().unwrap().to_string(),
+        Schedule::new(dependabot_config::v2::Interval::Weekly),
+    )
 }
 
 fn main() {
     let args = Cli::parse();
-    println!("Scanning directory {}.", args.path.to_str().unwrap());
+    let scanned_root = args.path;
+    let scanned_directory = &scanned_root.as_os_str().to_str().map(String::from);
+    println!("Scanning directory {}.", scanned_directory.clone().unwrap());
 
     let ignored_dirs = HashSet::from([".git", "target"].map(|s| s.to_string()));
     let mapping = HashMap::from(
         [
-            ("package.json", "npm"),
-            ("package-lock.json", "npm"),
-            ("yarn.lock", "npm"),
-            ("Dockerfile", "docker"),
-            ("Cargo.toml", "cargo"),
-            ("requirements.txt", "pip"),
-            ("pyproject.toml", "pip"),
-            ("poetry.lock", "pip"),
+            ("package.json", PackageEcosystem::Npm),
+            ("package-lock.json", PackageEcosystem::Npm),
+            ("yarn.lock", PackageEcosystem::Npm),
+            ("Dockerfile", PackageEcosystem::Docker),
+            ("Cargo.toml", PackageEcosystem::Cargo),
+            ("requirements.txt", PackageEcosystem::Pip),
+            ("pyproject.toml", PackageEcosystem::Pip),
+            ("poetry.lock", PackageEcosystem::Pip),
         ]
-        .map(|p| (p.0.to_string(), p.1.to_string())),
+        .map(|p| (p.0.to_string(), p.1)),
     );
 
-    let walk_dir = WalkDir::new(args.path);
-    let found = find_targets(mapping, ignored_dirs, walk_dir);
+    let walk_dir = WalkDir::new(scanned_root);
+    let found = find_targets(
+        mapping,
+        ignored_dirs,
+        walk_dir,
+        scanned_directory.clone().unwrap(),
+    );
+
+    if found.is_empty() {
+        println!("Found no targets.");
+        std::process::exit(0);
+    }
+
+    let updates = found.iter().map(found_to_update).collect();
+    let d: Dependabot = Dependabot::new(updates);
+    dbg!(d);
 
     println!(
         "Found package managers: {}.",
         found
             .into_iter()
-            .map(String::from)
+            .map(|f| format!("found {} in {}", f.file_name.unwrap(), f.path.unwrap()))
             .collect::<Vec<String>>()
             .join(", ")
     );
