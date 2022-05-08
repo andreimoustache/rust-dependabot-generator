@@ -1,4 +1,8 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    fs::File,
+    io::Write,
+};
 
 use clap::Parser;
 use dependabot_config::v2::{Dependabot, PackageEcosystem, Schedule, Update};
@@ -26,6 +30,7 @@ fn is_ignored(ignored_dirs: &HashSet<String>, entry: &DirEntry) -> bool {
         .unwrap_or(false);
 }
 
+#[derive(Clone)]
 struct FoundTarget {
     ecosystem: Option<PackageEcosystem>,
     path: Option<String>,
@@ -73,6 +78,7 @@ fn main() {
     let args = Cli::parse();
     let scanned_root = args.path;
     let scanned_directory = &scanned_root.as_os_str().to_str().map(String::from);
+    let dependabot_config_file_path = ".github/dependabot.yaml";
     println!("Scanning directory {}.", scanned_directory.clone().unwrap());
 
     let ignored_dirs = HashSet::from([".git", "target"].map(|s| s.to_string()));
@@ -103,18 +109,27 @@ fn main() {
         std::process::exit(0);
     }
 
-    let updates = found.iter().map(found_to_update).collect();
-    let d: Dependabot = Dependabot::new(updates);
-    dbg!(d);
-
     println!(
         "Found package managers: {}.",
         found
+            .clone()
             .into_iter()
             .map(|f| format!("found {} in {}", f.file_name.unwrap(), f.path.unwrap()))
             .collect::<Vec<String>>()
             .join(", ")
     );
+
+    let updates = found.iter().map(found_to_update).collect();
+    let dependabot_config: Dependabot = Dependabot::new(updates);
+    println!(
+        "Writing dependabot config to file {}",
+        dependabot_config_file_path
+    );
+    let mut config_file =
+        File::create(dependabot_config_file_path).expect("Couldn't create dependabot config file");
+    write!(config_file, "{}", &dependabot_config.to_string())
+        .expect("Couldn't write dependabot config file");
+    println!("Done!");
 }
 
 #[cfg(test)]
