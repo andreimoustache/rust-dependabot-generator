@@ -49,20 +49,28 @@ fn find_targets(
         .filter_entry(|entry| !is_ignored(&ignored_dirs, entry))
         .filter_map(|entry| entry.ok())
         .filter(|entry| is_target(&mapping, entry))
-        .map(|entry| FoundTarget {
-            file_name: entry.file_name().to_str().map(String::from),
-            path: entry.path().to_path_buf().parent().map(|file_path: &Path| {
+        .map(|entry| {
+            let file_name = entry.file_name().to_str().map(String::from);
+            let ecosystem = Some(*mapping.get(&file_name.clone().unwrap()).unwrap());
+            let path = entry.path().to_path_buf().parent().map(|file_path: &Path| {
                 file_path
                     .strip_prefix(&root)
                     .expect("Couldn't strip prefix")
                     .to_str()
                     .map_or(String::from(MAIN_SEPARATOR), String::from)
-            }),
-            ecosystem: Some(
-                *mapping
-                    .get(&entry.file_name().to_str().map(String::from).unwrap())
-                    .unwrap(),
-            ),
+            });
+
+            let path = if path == Some(String::from("")) {
+                Some(String::from(MAIN_SEPARATOR))
+            } else {
+                path
+            };
+
+            FoundTarget {
+                file_name,
+                path,
+                ecosystem,
+            }
         })
         .collect()
 }
