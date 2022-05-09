@@ -2,6 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     fs::File,
     io::Write,
+    path::{Path, MAIN_SEPARATOR},
 };
 
 use clap::Parser;
@@ -50,13 +51,13 @@ fn find_targets(
         .filter(|entry| is_target(&mapping, entry))
         .map(|entry| FoundTarget {
             file_name: entry.file_name().to_str().map(String::from),
-            path: entry
-                .path()
-                .strip_prefix(root.clone())
-                .unwrap()
-                .as_os_str()
-                .to_str()
-                .map(String::from),
+            path: entry.path().to_path_buf().parent().map(|file_path: &Path| {
+                file_path
+                    .strip_prefix(&root)
+                    .expect("Couldn't strip prefix")
+                    .to_str()
+                    .map_or(String::from(MAIN_SEPARATOR), String::from)
+            }),
             ecosystem: Some(
                 *mapping
                     .get(&entry.file_name().to_str().map(String::from).unwrap())
