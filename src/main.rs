@@ -1,7 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
-    fs::File,
-    io::Write,
+    fs::{self},
     path::{Path, MAIN_SEPARATOR},
 };
 
@@ -87,7 +86,9 @@ fn main() {
     let args = Cli::parse();
     let scanned_root = args.path;
     let scanned_directory = &scanned_root.as_os_str().to_str().map(String::from);
-    let dependabot_config_file_path = ".github/dependabot.yaml";
+    let dependabot_config_file_path = Path::new(&scanned_root)
+        .join(".github")
+        .join("dependabot.yaml");
     println!("Scanning directory {}.", scanned_directory.clone().unwrap());
 
     let ignored_dirs = HashSet::from([".git", "target"].map(|s| s.to_string()));
@@ -148,12 +149,19 @@ fn main() {
     let dependabot_config: Dependabot = Dependabot::new(updates);
     println!(
         "Writing dependabot config to file {}",
-        dependabot_config_file_path
+        dependabot_config_file_path.to_str().unwrap()
     );
-    let mut config_file =
-        File::create(dependabot_config_file_path).expect("Couldn't create dependabot config file");
-    write!(config_file, "{}", &dependabot_config.to_string())
-        .expect("Couldn't write dependabot config file");
+
+    if let Some(p) = dependabot_config_file_path.parent() {
+        match fs::create_dir_all(p) {
+            Ok(it) => it,
+            Err(err) => println!("Couldn't create .github directory: {}", err),
+        }
+    };
+    match fs::write(dependabot_config_file_path, &dependabot_config.to_string()) {
+        Ok(it) => it,
+        Err(err) => println!("Couldn't create dependabot.yaml: {}", err),
+    };
     println!("Done!");
 }
 
