@@ -1,3 +1,4 @@
+use clap_verbosity_flag::{InfoLevel, Verbosity};
 use log::{debug, error, info};
 use std::{
     collections::{HashMap, HashSet},
@@ -13,6 +14,9 @@ use walkdir::{DirEntry, WalkDir};
 struct Cli {
     #[clap(parse(from_os_str))]
     path: std::path::PathBuf,
+
+    #[clap(flatten)]
+    verbose: Verbosity<InfoLevel>,
 }
 
 fn is_target(mapping: &HashMap<String, PackageEcosystem>, entry: &DirEntry) -> bool {
@@ -84,9 +88,11 @@ fn found_to_update(found_target: &FoundTarget) -> Update {
 }
 
 fn main() {
-    env_logger::init();
-
     let args = Cli::parse();
+    env_logger::Builder::new()
+        .filter_level(args.verbose.log_level_filter())
+        .init();
+
     let scanned_root = args.path;
     let scanned_directory = &scanned_root.as_os_str().to_str().map(String::from);
     let dependabot_config_file_path = Path::new(&scanned_root)
