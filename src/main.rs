@@ -91,7 +91,7 @@ fn main() {
         .join("dependabot.yaml");
     println!("Scanning directory {}.", scanned_directory.clone().unwrap());
 
-    let ignored_dirs = HashSet::from([".git", "target"].map(|s| s.to_string()));
+    let ignored_dirs = HashSet::from([".git", "target", "node_modules"].map(|s| s.to_string()));
     let mapping = HashMap::from(
         [
             ("package.json", PackageEcosystem::Npm),
