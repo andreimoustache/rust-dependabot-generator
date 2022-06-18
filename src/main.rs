@@ -1,3 +1,4 @@
+use log::{debug, error, info};
 use std::{
     collections::{HashMap, HashSet},
     fs::{self},
@@ -83,15 +84,20 @@ fn found_to_update(found_target: &FoundTarget) -> Update {
 }
 
 fn main() {
+    env_logger::init();
+
     let args = Cli::parse();
     let scanned_root = args.path;
     let scanned_directory = &scanned_root.as_os_str().to_str().map(String::from);
     let dependabot_config_file_path = Path::new(&scanned_root)
         .join(".github")
         .join("dependabot.yaml");
-    println!("Scanning directory {}.", scanned_directory.clone().unwrap());
+
+    info!("Scanning directory {}.", scanned_directory.clone().unwrap());
 
     let ignored_dirs = HashSet::from([".git", "target", "node_modules"].map(|s| s.to_string()));
+    debug!("Ignoring {:?}", &ignored_dirs);
+
     let mapping = HashMap::from(
         [
             ("package.json", PackageEcosystem::Npm),
@@ -131,11 +137,11 @@ fn main() {
     );
 
     if found.is_empty() {
-        println!("Found no targets.");
+        info!("Found no targets.");
         std::process::exit(0);
     }
 
-    println!(
+    info!(
         "Found package managers: {}.",
         found
             .clone()
@@ -147,7 +153,7 @@ fn main() {
 
     let updates = found.iter().map(found_to_update).collect();
     let dependabot_config: Dependabot = Dependabot::new(updates);
-    println!(
+    debug!(
         "Writing dependabot config to file {}",
         dependabot_config_file_path.to_str().unwrap()
     );
@@ -155,14 +161,14 @@ fn main() {
     if let Some(p) = dependabot_config_file_path.parent() {
         match fs::create_dir_all(p) {
             Ok(it) => it,
-            Err(err) => println!("Couldn't create .github directory: {}", err),
+            Err(err) => error!("Couldn't create .github directory: {}", err),
         }
     };
     match fs::write(dependabot_config_file_path, &dependabot_config.to_string()) {
         Ok(it) => it,
-        Err(err) => println!("Couldn't create dependabot.yaml: {}", err),
+        Err(err) => error!("Couldn't create dependabot.yaml: {}", err),
     };
-    println!("Done!");
+    info!("Done!");
 }
 
 #[cfg(test)]
