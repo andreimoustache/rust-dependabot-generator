@@ -1,6 +1,8 @@
 # rust-dependabot-generator
 _Generates a `dependabot` config for a given directory._
 
+![CI](https://github.com/andreimoustache/rust-dependabot-generator/actions/workflows/ci.yaml/badge.svg)
+
 Scans a directory for package manager config files, and generates the [`dependabot.yaml`](https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file).
 
 **Note** This is a work in progress, and not everything works properly, assumptions are made,
