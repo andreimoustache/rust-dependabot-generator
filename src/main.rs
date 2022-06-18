@@ -11,6 +11,7 @@ use dependabot_config::v2::{Dependabot, PackageEcosystem, Schedule, Update};
 use walkdir::{DirEntry, WalkDir};
 
 #[derive(Parser)]
+#[clap(author, version, about, long_about = None)]
 struct Cli {
     #[clap(parse(from_os_str))]
     path: std::path::PathBuf,
