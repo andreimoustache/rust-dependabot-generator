@@ -21,19 +21,19 @@ struct Cli {
 }
 
 fn is_target(mapping: &HashMap<String, PackageEcosystem>, entry: &DirEntry) -> bool {
-    return entry
+    entry
         .file_name()
         .to_str()
         .map(|s| mapping.contains_key(&s.to_string()))
-        .unwrap_or(false);
+        .unwrap_or(false)
 }
 
 fn is_ignored(ignored_dirs: &HashSet<String>, entry: &DirEntry) -> bool {
-    return entry
+    entry
         .file_name()
         .to_str()
         .map(|s| ignored_dirs.contains(&s.to_string()))
-        .unwrap_or(false);
+        .unwrap_or(false)
 }
 
 #[derive(Clone)]
@@ -171,7 +171,7 @@ fn main() {
             Err(err) => error!("Couldn't create .github directory: {}", err),
         }
     };
-    match fs::write(dependabot_config_file_path, &dependabot_config.to_string()) {
+    match fs::write(dependabot_config_file_path, dependabot_config.to_string()) {
         Ok(it) => it,
         Err(err) => error!("Couldn't create dependabot.yaml: {}", err),
     };
