@@ -41,8 +41,8 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: install
-          args: semantic-release-rust --version 1.0.0-alpha.8
+          args: semantic-release-rust --version 2.4.4
       - name: Semantic Release
-        uses: cycjimmy/semantic-release-action@v3
+        uses: cycjimmy/semantic-release-action@v4
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
