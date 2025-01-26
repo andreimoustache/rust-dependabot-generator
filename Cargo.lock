@@ -141,18 +141,19 @@ checksum = "5b63caa9aa9397e2d9480a9b13673856c78d8ac123288526c37d7839f2a86990"
 
 [[package]]
 name = "dependabot-config"
-version = "0.2.2"
+version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7222214f20eabbff3cdad4210ba8b36adb9bdde3309c22cc1e561c44b9429c3f"
+checksum = "81c1a2253474679ba0ded7a8e5c23586e2f5c80a0a9596f65b2e147b11291c79"
 dependencies = [
- "indexmap 1.9.3",
+ "indexmap 2.7.1",
  "serde",
+ "serde_derive",
  "serde_yaml",
 ]
 
 [[package]]
 name = "dependabot-generator"
-version = "0.1.4"
+version = "1.0.0"
 dependencies = [
  "clap",
  "clap-verbosity-flag",
@@ -232,7 +233,6 @@ checksum = "bd070e393353796e801d209ad339e89596eb4c8d430d18ede6a1cced8fafbd99"
 dependencies = [
  "autocfg",
  "hashbrown 0.12.3",
- "serde",
 ]
 
 [[package]]
@@ -243,6 +243,7 @@ checksum = "8c9c992b02b5b4c94ea26e32fe5bccb7aa7d9f390ab5c1221ff895bc7ea8b652"
 dependencies = [
  "equivalent",
  "hashbrown 0.15.2",
+ "serde",
 ]
 
 [[package]]
