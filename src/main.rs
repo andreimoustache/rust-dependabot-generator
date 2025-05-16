@@ -9,6 +9,7 @@ use std::{
 use clap::Parser;
 use dependabot_config::v2::{Dependabot, PackageEcosystem, Schedule, Update};
 use walkdir::{DirEntry, WalkDir};
+use gitmodules::{read_gitmodules};
 
 #[derive(Parser)]
 #[clap(author, version, about, long_about = None)]
@@ -78,12 +79,46 @@ fn find_targets(
         .collect()
 }
 
-fn found_to_update(found_target: &FoundTarget) -> Update {
-    Update::new(
+fn found_to_update(found_target: &FoundTarget, scanned_root: &str) -> Vec<Update> {
+    // Special handling for .gitmodules
+    if let (Some(PackageEcosystem::Gitsubmodule), Some(ref _path), Some(ref file_name)) = (
+        found_target.ecosystem,
+        found_target.path.as_ref(),
+        found_target.file_name.as_ref(),
+    ) {
+        // Use scanned_root to build the absolute path to .gitmodules
+        let gitmodules_path = Path::new(scanned_root).join(file_name);
+        // Read the .gitmodules file and extract submodule paths
+        let file = std::fs::File::open(&gitmodules_path);
+        let submodules = if let Ok(file) = file {
+            let reader = std::io::BufReader::new(file);
+            match read_gitmodules(reader) {
+                Ok(subs) => subs,
+                Err(_) => Vec::new(),
+            }
+        } else {
+            Vec::new()
+        };
+        // For each submodule, create an Update for its path
+        return submodules
+            .into_iter()
+            .filter_map(|sub| sub.path())
+            .map(|sub_path| {
+                Update::new(
+                    PackageEcosystem::Gitsubmodule,
+                    sub_path,
+                    Schedule::new(dependabot_config::v2::Interval::Weekly),
+                )
+            })
+            .collect();
+    }
+
+    // Default: single update
+    vec![Update::new(
         found_target.ecosystem.unwrap().to_owned(),
         found_target.path.as_ref().unwrap().to_string(),
         Schedule::new(dependabot_config::v2::Interval::Weekly),
-    )
+    )]
 }
 
 fn main() {
@@ -102,7 +137,10 @@ fn main() {
         .join(".github")
         .join("dependabot.yaml");
 
-    info!("Scanning directory {}.", scanned_directory.clone().unwrap());
+    info!(
+        "Scanning directory {}.",
+        scanned_directory.clone().unwrap_or_else(|| "<invalid path>".to_string())
+    );
 
     let ignored_dirs = HashSet::from([".git", "target", "node_modules"].map(|s| s.to_string()));
     debug!("Ignoring {:?}", &ignored_dirs);
@@ -134,6 +172,7 @@ fn main() {
             // ("pubspec.yaml", PackageEcosystem::Pub),
             ("packages.config", PackageEcosystem::Nuget),
             ("*.csproj", PackageEcosystem::Nuget), // TODO: make this work
+            (".gitmodules", PackageEcosystem::Gitsubmodule),
         ]
         .map(|p| (p.0.to_string(), p.1)),
     );
@@ -161,7 +200,7 @@ fn main() {
             .join(", ")
     );
 
-    let updates = found.iter().map(found_to_update).collect();
+    let updates: Vec<Update> = found.iter().flat_map(|f| found_to_update(f, scanned_directory.as_ref().unwrap())).collect();
     let dependabot_config: Dependabot = Dependabot::new(updates);
     debug!(
         "Writing dependabot config to file {}",
@@ -186,6 +225,7 @@ mod tests {
     use crate::is_ignored;
     use std::collections::HashSet;
     use walkdir::WalkDir;
+use std::io::Read;
 
     #[test]
     fn is_ignored_test() {
