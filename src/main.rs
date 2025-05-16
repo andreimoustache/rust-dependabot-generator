@@ -8,8 +8,8 @@ use std::{
 
 use clap::Parser;
 use dependabot_config::v2::{Dependabot, PackageEcosystem, Schedule, Update};
+use gitmodules::read_gitmodules;
 use walkdir::{DirEntry, WalkDir};
-use gitmodules::{read_gitmodules};
 
 #[derive(Parser)]
 #[clap(author, version, about, long_about = None)]
@@ -139,7 +139,9 @@ fn main() {
 
     info!(
         "Scanning directory {}.",
-        scanned_directory.clone().unwrap_or_else(|| "<invalid path>".to_string())
+        scanned_directory
+            .clone()
+            .unwrap_or_else(|| "<invalid path>".to_string())
     );
 
     let ignored_dirs = HashSet::from([".git", "target", "node_modules"].map(|s| s.to_string()));
@@ -199,7 +201,10 @@ fn main() {
             .join(", ")
     );
 
-    let updates: Vec<Update> = found.iter().flat_map(|f| found_to_update(f, scanned_directory.as_ref().unwrap())).collect();
+    let updates: Vec<Update> = found
+        .iter()
+        .flat_map(|f| found_to_update(f, scanned_directory.as_ref().unwrap()))
+        .collect();
     let dependabot_config: Dependabot = Dependabot::new(updates);
     debug!(
         "Writing dependabot config to file {}",
@@ -223,8 +228,8 @@ fn main() {
 mod tests {
     use crate::is_ignored;
     use std::collections::HashSet;
+    use std::io::Read;
     use walkdir::WalkDir;
-use std::io::Read;
 
     #[test]
     fn is_ignored_test() {
