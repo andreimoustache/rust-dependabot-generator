@@ -130,6 +130,7 @@ fn main() {
             ("pom.xml", PackageEcosystem::Maven),
             (".terraform.lock.hcl", PackageEcosystem::Terraform),
             // ("pubspec.yaml", PackageEcosystem::Pub),
+            ("packages.config", PackageEcosystem::Nuget),
             ("*.csproj", PackageEcosystem::Nuget), // TODO: make this work
         ]
         .map(|p| (p.0.to_string(), p.1)),
