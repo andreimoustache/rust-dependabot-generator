@@ -223,9 +223,14 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    use crate::found_to_update;
     use crate::is_ignored;
+    use crate::FoundTarget;
+    use dependabot_config::v2::PackageEcosystem;
     use std::collections::HashSet;
-    use std::io::Read;
+    use std::fs::File;
+    use std::io::Write;
+    use tempfile::tempdir;
     use walkdir::WalkDir;
 
     #[test]
@@ -237,5 +242,25 @@ mod tests {
         {
             assert!(is_ignored(&ignored, &entry));
         }
+    }
+    #[test]
+    fn test_found_to_update_gitmodules_with_submodules() {
+        let dir = tempdir().unwrap();
+        let gitmodules_path = dir.path().join(".gitmodules");
+        let mut file = File::create(&gitmodules_path).unwrap();
+        // Write a fake submodule entry
+        writeln!(
+            file,
+            "[submodule \"foo\"]\n\tpath = foo/bar\n\turl = https://example.com/foo/bar.git"
+        )
+        .unwrap();
+
+        let found = FoundTarget {
+            ecosystem: Some(PackageEcosystem::Gitsubmodule),
+            path: Some("".to_string()),
+            file_name: Some(".gitmodules".to_string()),
+        };
+        let updates = found_to_update(&found, dir.path().to_str().unwrap());
+        assert_eq!(updates.len(), 1);
     }
 }
