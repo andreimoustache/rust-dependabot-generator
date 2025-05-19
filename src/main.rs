@@ -81,7 +81,7 @@ fn find_targets(
 
 fn found_to_update(found_target: &FoundTarget, scanned_root: &str) -> Vec<Update> {
     // Special handling for .gitmodules
-    if let (Some(PackageEcosystem::Gitsubmodule), Some(ref _path), Some(ref file_name)) = (
+    if let (Some(PackageEcosystem::Gitsubmodule), Some(_path), Some(ref file_name)) = (
         found_target.ecosystem,
         found_target.path.as_ref(),
         found_target.file_name.as_ref(),
@@ -92,10 +92,7 @@ fn found_to_update(found_target: &FoundTarget, scanned_root: &str) -> Vec<Update
         let file = std::fs::File::open(&gitmodules_path);
         let submodules = if let Ok(file) = file {
             let reader = std::io::BufReader::new(file);
-            match read_gitmodules(reader) {
-                Ok(subs) => subs,
-                Err(_) => Vec::new(),
-            }
+            read_gitmodules(reader).unwrap_or_default()
         } else {
             Vec::new()
         };
