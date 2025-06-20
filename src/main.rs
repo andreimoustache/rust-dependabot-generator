@@ -1,5 +1,5 @@
 use clap_verbosity_flag::{InfoLevel, Verbosity};
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use std::{
     collections::{HashMap, HashSet},
     fs::{self},
@@ -13,7 +13,7 @@ use walkdir::{DirEntry, WalkDir};
 #[derive(Parser)]
 #[clap(author, version, about, long_about = None)]
 struct Cli {
-    #[clap(parse(from_os_str))]
+    #[clap(value_parser)]
     path: std::path::PathBuf,
 
     #[clap(flatten)]
@@ -24,16 +24,14 @@ fn is_target(mapping: &HashMap<String, PackageEcosystem>, entry: &DirEntry) -> b
     entry
         .file_name()
         .to_str()
-        .map(|s| mapping.contains_key(&s.to_string()))
-        .unwrap_or(false)
+        .is_some_and(|s| mapping.contains_key(&s.to_string()))
 }
 
 fn is_ignored(ignored_dirs: &HashSet<String>, entry: &DirEntry) -> bool {
     entry
         .file_name()
         .to_str()
-        .map(|s| ignored_dirs.contains(&s.to_string()))
-        .unwrap_or(false)
+        .is_some_and(|s| ignored_dirs.contains(&s.to_string()))
 }
 
 #[derive(Clone)]
@@ -95,6 +93,10 @@ fn main() {
         .init();
 
     let scanned_root = args.path;
+    if !scanned_root.is_dir() {
+        warn!("Root path is not a directory");
+        return;
+    }
     let scanned_directory = &scanned_root.as_os_str().to_str().map(String::from);
     let dependabot_config_file_path = Path::new(&scanned_root)
         .join(".github")
