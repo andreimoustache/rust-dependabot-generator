@@ -101,7 +101,7 @@ fn find_ecosystem<P: AsRef<Path> + ?Sized>(path: &P, root: &String) -> Option<Pa
     for (ecosystem, globset) in ECOSYSTEMS.iter() {
         if ecosystem == &GithubActions {
             if matches!(path.as_ref().strip_prefix(root), Ok(sub) if globset.is_match(sub)) {
-                return Some(*ecosystem);
+                return Some(*ecosystem); // .github/workflows/*.y{,a}ml
             }
         } else if globset.is_match(filename) {
             return Some(*ecosystem);
@@ -148,6 +148,14 @@ struct EcosystemPath {
 }
 
 fn find_targets(ignored_dirs: HashSet<String>, walk: WalkDir, root: String) -> Vec<FoundTarget> {
+    // .github/workflows/*.y{,a}ml has to be stripped to /
+    let gha_or_empty = |e, p: &str| {
+        if e == GithubActions || p.is_empty() {
+            MAIN_SEPARATOR.to_string()
+        } else {
+            p.to_string()
+        }
+    };
     let grouped = walk
         .follow_links(true)
         .into_iter()
@@ -160,21 +168,14 @@ fn find_targets(ignored_dirs: HashSet<String>, walk: WalkDir, root: String) -> V
                 .path()
                 .to_path_buf()
                 .parent()
-                .map(|file_path: &Path| {
+                .and_then(|file_path: &Path| {
                     file_path
                         .strip_prefix(&root)
                         .expect("Couldn't strip prefix")
                         .to_str()
-                        .map_or(String::from(MAIN_SEPARATOR), String::from)
+                        .map(|p| gha_or_empty(ecosystem, p))
                 })
-                .map(|s| {
-                    if s.is_empty() {
-                        String::from(MAIN_SEPARATOR)
-                    } else {
-                        s
-                    }
-                })
-                .expect("should resolve parent");
+                .unwrap_or_else(|| MAIN_SEPARATOR.to_string());
             Some((EcosystemPath { ecosystem, path }, file_name))
         })
         .into_group_map_by(|a| a.0.clone());
