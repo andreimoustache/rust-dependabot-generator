@@ -61,11 +61,7 @@ const PATTERNS_HELM: [&str; 1] = [
 ];
 const PATTERNS_MAVEN: [&str; 1] = ["pom.xml"];
 const PATTERNS_HEX: [&str; 1] = ["mix.{exs,lock}"]; // Elixir
-const PATTERNS_NPM: [&str; 3] = [
-    "package{,-lock}.json",
-    "{bun,deno,yarn}.lock",
-    "pnpm-lock.yaml",
-];
+const PATTERNS_NPM: [&str; 3] = ["package{,-lock}.json", "{deno,yarn}.lock", "pnpm-lock.yaml"];
 const PATTERNS_NUGET: [&str; 3] = [
     "*.csproj",
     "project.json",    // (older .NET Core projects)
@@ -75,7 +71,7 @@ const PATTERNS_PIP: [&str; 5] = [
     "pyproject.toml",
     "setup.{cfg,py}",
     "requirements*.{in,txt}",
-    "{poetry,uv}.lock",
+    "poetry.lock",
     "Pipfile{,.lock}",
 ];
 const PATTERNS_PUB: [&str; 1] = ["pubspec.{yaml,lock}"]; // Dart
@@ -357,9 +353,9 @@ mod tests {
             "a/build.gradle", "build.gradle.kts", "gradle.build", "settings.gradle",
             "a/pom.xml",
             "a/mix.exs", "mix.lock",
-            "a/package.json", "package-lock.json", "bun.lock", "deno.lock", "yarn.lock", "pnpm-lock.yaml",
+            "a/package.json", "package-lock.json", "deno.lock", "yarn.lock", "pnpm-lock.yaml",
             "a/b.csproj", "project.json", "packages.config",
-            "a/pyproject.toml", "setup.cfg", "setup.py", "requirements.in", "requirements-dev.in", "requirements.txt", "requirements-prod.txt", "poetry.lock", "uv.lock", "Pipfile", "Pipfile.lock",
+            "a/pyproject.toml", "setup.cfg", "setup.py", "requirements.in", "requirements-dev.in", "requirements.txt", "requirements-prod.txt", "poetry.lock", "Pipfile", "Pipfile.lock",
             "a/pubspec.yaml", "pubspec.lock",
             "a/Package.swift", "Package.resolved",
             "a/main.tf", "variables.tf", "terraform.tfstate", ".terraform.lock.hcl",
@@ -378,9 +374,9 @@ mod tests {
             Some(Gradle), Some(Gradle), Some(Gradle), Some(Gradle),
             Some(Maven),
             Some(Hex), Some(Hex),
-            Some(Npm), Some(Npm), Some(Npm), Some(Npm), Some(Npm), Some(Npm),
+            Some(Npm), Some(Npm), Some(Npm), Some(Npm), Some(Npm),
             Some(Nuget), Some(Nuget), Some(Nuget),
-            Some(Pip), Some(Pip), Some(Pip), Some(Pip), Some(Pip), Some(Pip), Some(Pip), Some(Pip), Some(Pip), Some(Pip), Some(Pip),
+            Some(Pip), Some(Pip), Some(Pip), Some(Pip), Some(Pip), Some(Pip), Some(Pip), Some(Pip), Some(Pip), Some(Pip),
             Some(Pub), Some(Pub),
             Some(Swift), Some(Swift),
             Some(Terraform), Some(Terraform), Some(Terraform), Some(Terraform)
