@@ -171,12 +171,12 @@ fn main() {
     if let Some(p) = dependabot_config_file_path.parent() {
         match fs::create_dir_all(p) {
             Ok(it) => it,
-            Err(err) => error!("Couldn't create .github directory: {}", err),
+            Err(err) => error!("Couldn't create .github directory: {err}"),
         }
     };
     match fs::write(dependabot_config_file_path, dependabot_config.to_string()) {
         Ok(it) => it,
-        Err(err) => error!("Couldn't create dependabot.yaml: {}", err),
+        Err(err) => error!("Couldn't create dependabot.yaml: {err}"),
     };
     info!("Done!");
 }
