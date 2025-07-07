@@ -36,7 +36,7 @@ fn is_ignored(ignored_dirs: &HashSet<String>, entry: &DirEntry) -> bool {
 }
 
 /// Allow grouping of filenames, i.e. npm (package.json and yarn.lock)
-#[derive(Clone, Hash, Debug)]
+#[derive(Clone, Hash, Debug, PartialEq)]
 struct FoundTarget {
     ecosystem: PackageEcosystem,
     path: String,
@@ -177,28 +177,8 @@ fn main() {
         std::process::exit(0);
     }
 
-    let managers = found
-        .iter()
-        .map(|p| p.ecosystem.to_string())
-        .unique()
-        .collect::<Vec<String>>()
-        .join(", ");
-    let values = found
-        .iter()
-        .map(|f: &FoundTarget| {
-            format!(
-                "{}: /{} ({})",
-                f.ecosystem,
-                if f.path == MAIN_SEPARATOR.to_string() {
-                    String::new()
-                } else {
-                    f.path.clone()
-                },
-                f.file_names.iter().join(", ")
-            )
-        })
-        .collect::<Vec<String>>()
-        .join("\n");
+    let managers = found_managers(&found);
+    let values = found_values(&found);
     info!("Found package managers {managers}:\n{values}");
 
     let updates = found.iter().map(found_to_update).collect();
@@ -221,10 +201,41 @@ fn main() {
     info!("Done!");
 }
 
+fn found_managers(found: &[FoundTarget]) -> String {
+    found
+        .iter()
+        .map(|p| p.ecosystem.to_string())
+        .unique()
+        .collect::<Vec<String>>()
+        .join(", ")
+}
+
+fn found_values(found: &[FoundTarget]) -> String {
+    found
+        .iter()
+        .map(|f: &FoundTarget| {
+            format!(
+                "{}: /{} ({})",
+                f.ecosystem,
+                if f.path == MAIN_SEPARATOR.to_string() {
+                    String::new()
+                } else {
+                    f.path.clone()
+                },
+                f.file_names.iter().join(", ")
+            )
+        })
+        .collect::<Vec<String>>()
+        .join("\n")
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::is_ignored;
-    use std::collections::HashSet;
+    use crate::{find_targets, found_managers, found_values, is_ignored};
+    use dependabot_config::v2::PackageEcosystem::{Cargo, Npm};
+    use std::collections::{HashMap, HashSet};
+    use std::fs;
+    use tempfile::tempdir;
     use walkdir::WalkDir;
 
     #[test]
@@ -236,5 +247,36 @@ mod tests {
         {
             assert!(is_ignored(&ignored, &entry));
         }
+    }
+
+    #[test]
+    fn deduplication_and_sorting_test() {
+        let mapping = HashMap::from([
+            ("package.json".into(), Npm),
+            ("package-lock.json".into(), Npm),
+            ("Cargo.toml".into(), Cargo),
+        ]);
+
+        let tmpdir = tempdir().expect("Couldn't create temp dir");
+        mapping
+            .keys()
+            .for_each(|f| fs::write(tmpdir.path().join(f), "").expect("Couldn't create file"));
+
+        let found = find_targets(
+            mapping,
+            HashSet::new(),
+            WalkDir::new(tmpdir.path()),
+            tmpdir.path().to_str().unwrap().to_string(),
+        );
+
+        let managers = found_managers(&found);
+        let values = found_values(&found);
+        assert_eq!(
+            (
+                "cargo, npm",
+                "cargo: / (Cargo.toml)\nnpm: / (package-lock.json, package.json)"
+            ),
+            (managers.as_str(), values.as_str())
+        );
     }
 }
