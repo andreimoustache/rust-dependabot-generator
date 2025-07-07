@@ -131,7 +131,7 @@ dependencies = [
 
 [[package]]
 name = "dependabot-generator"
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
  "clap",
  "clap-verbosity-flag",
