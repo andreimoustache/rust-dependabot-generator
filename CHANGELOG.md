@@ -1,3 +1,10 @@
+# [1.3.0](https://github.com/andreimoustache/rust-dependabot-generator/compare/v1.2.0...v1.3.0) (2025-07-08)
+
+
+### Features
+
+* support globs ([#66](https://github.com/andreimoustache/rust-dependabot-generator/issues/66)) ([2560e44](https://github.com/andreimoustache/rust-dependabot-generator/commit/2560e447b6fd80fdab4faeafc4872434cd82405b))
+
 # [1.2.0](https://github.com/andreimoustache/rust-dependabot-generator/compare/v1.1.0...v1.2.0) (2025-07-08)
 
 
