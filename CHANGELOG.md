@@ -1,3 +1,10 @@
+# [1.2.0](https://github.com/andreimoustache/rust-dependabot-generator/compare/v1.1.0...v1.2.0) (2025-07-08)
+
+
+### Features
+
+* deduplicate and sort paths ([#64](https://github.com/andreimoustache/rust-dependabot-generator/issues/64)) ([c8e70a9](https://github.com/andreimoustache/rust-dependabot-generator/commit/c8e70a98eae517bad5254fb93ed59be9615c2a80))
+
 # [1.1.0](https://github.com/andreimoustache/rust-dependabot-generator/compare/v1.0.1...v1.1.0) (2025-07-07)
 
 
