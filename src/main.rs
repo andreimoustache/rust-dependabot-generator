@@ -1,15 +1,86 @@
 use clap_verbosity_flag::{InfoLevel, Verbosity};
+use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use log::{debug, error, info, warn};
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
     fs::{self},
     path::{Path, MAIN_SEPARATOR},
+    sync::LazyLock,
 };
 
 use clap::Parser;
 use dependabot_config::v2::{Dependabot, PackageEcosystem, Schedule, Update};
 use itertools::Itertools;
 use walkdir::{DirEntry, WalkDir};
+use PackageEcosystem::{
+    Bundler, Cargo, Composer, Docker, Elm, GithubActions, Gitsubmodule, Gomod, Gradle, Hex, Maven,
+    Npm, Nuget, Pip, Pub, Swift, Terraform,
+};
+
+static ECOSYSTEMS: LazyLock<HashMap<PackageEcosystem, GlobSet>> = LazyLock::new(|| {
+    HashMap::from([
+        (Bundler, patterns_to_globset(&PATTERNS_BUNDLER)),
+        (Cargo, patterns_to_globset(&PATTERNS_CARGO)),
+        (Composer, patterns_to_globset(&PATTERNS_COMPOSER)),
+        (Docker, patterns_to_globset(&PATTERNS_DOCKER)),
+        (Hex, patterns_to_globset(&PATTERNS_HEX)),
+        (Elm, patterns_to_globset(&PATTERNS_ELM)),
+        (Gitsubmodule, patterns_to_globset(&PATTERNS_GITSUBMODULES)),
+        (GithubActions, patterns_to_globset(&PATTERNS_GITHUBACTIONS)),
+        (Gomod, patterns_to_globset(&PATTERNS_GOMOD)),
+        (Gradle, patterns_to_globset(&PATTERNS_GRADLE)),
+        (Maven, patterns_to_globset(&PATTERNS_MAVEN)),
+        (Npm, patterns_to_globset(&PATTERNS_NPM)),
+        (Nuget, patterns_to_globset(&PATTERNS_NUGET)),
+        (Pip, patterns_to_globset(&PATTERNS_PIP)),
+        (Pub, patterns_to_globset(&PATTERNS_PUB)),
+        (Swift, patterns_to_globset(&PATTERNS_SWIFT)),
+        (Terraform, patterns_to_globset(&PATTERNS_TERRAFORM)),
+    ])
+});
+
+// Globs are defined in each FileFetcher class:
+// https://github.com/dependabot/dependabot-core/blob/HEAD/helm/lib/dependabot/helm/file_fetcher.rb#L9
+const PATTERNS_BUNDLER: [&str; 1] = ["Gemfile{,.lock}"];
+const PATTERNS_CARGO: [&str; 1] = ["Cargo.{toml,lock}"];
+const PATTERNS_COMPOSER: [&str; 1] = ["composer.{json,lock}"];
+const PATTERNS_DOCKER: [&str; 2] = ["*Dockerfile*", "*docker-compose*.y{,a}ml"];
+const PATTERNS_ELM: [&str; 1] = ["elm.json"];
+const PATTERNS_GITSUBMODULES: [&str; 1] = [".gitmodules"];
+const PATTERNS_GITHUBACTIONS: [&str; 1] = [".github/workflows/*.y{,a}ml"]; // path separators!
+const PATTERNS_GOMOD: [&str; 1] = ["go.{mod,sum}"];
+const PATTERNS_GRADLE: [&str; 3] = [
+    "build.gradle{,.kts}",
+    "gradle.build", // (older versions)
+    "settings.gradle",
+];
+#[allow(dead_code)]
+const PATTERNS_HELM: [&str; 1] = [
+    // "*.y{,a}ml", // doesn't really make sense to allow any YAML file
+    "Chart.lock",
+];
+const PATTERNS_MAVEN: [&str; 1] = ["pom.xml"];
+const PATTERNS_HEX: [&str; 1] = ["mix.{exs,lock}"]; // Elixir
+const PATTERNS_NPM: [&str; 3] = ["package{,-lock}.json", "{deno,yarn}.lock", "pnpm-lock.yaml"];
+const PATTERNS_NUGET: [&str; 3] = [
+    "*.csproj",
+    "project.json",    // (older .NET Core projects)
+    "packages.config", // (legacy NuGet projects)
+];
+const PATTERNS_PIP: [&str; 5] = [
+    "pyproject.toml",
+    "setup.{cfg,py}",
+    "requirements*.{in,txt}",
+    "poetry.lock",
+    "Pipfile{,.lock}",
+];
+const PATTERNS_PUB: [&str; 1] = ["pubspec.{yaml,lock}"]; // Dart
+const PATTERNS_SWIFT: [&str; 1] = ["Package.{swift,resolved}"];
+const PATTERNS_TERRAFORM: [&str; 3] = [
+    "{main,variables}.tf",
+    "terraform.tfstate",
+    ".terraform.lock.hcl", // hidden file!
+];
 
 #[derive(Parser)]
 #[clap(author, version, about, long_about = None)]
@@ -21,11 +92,34 @@ struct Cli {
     verbose: Verbosity<InfoLevel>,
 }
 
-fn is_target(mapping: &HashMap<String, PackageEcosystem>, entry: &DirEntry) -> bool {
-    entry
-        .file_name()
-        .to_str()
-        .is_some_and(|s| mapping.contains_key(&s.to_string()))
+fn find_ecosystem<P: AsRef<Path> + ?Sized>(path: &P, root: &String) -> Option<PackageEcosystem> {
+    let filename = path.as_ref().file_name()?;
+    for (ecosystem, globset) in ECOSYSTEMS.iter() {
+        if ecosystem == &GithubActions {
+            if matches!(path.as_ref().strip_prefix(root), Ok(sub) if globset.is_match(sub)) {
+                return Some(*ecosystem); // .github/workflows/*.y{,a}ml
+            }
+        } else if globset.is_match(filename) {
+            return Some(*ecosystem);
+        }
+    }
+    None
+}
+
+fn patterns_to_globset(x: &[&str]) -> GlobSet {
+    let mut npm = GlobSetBuilder::new();
+    x.iter()
+        .map(|p| {
+            GlobBuilder::new(p)
+                .empty_alternates(true)
+                .build()
+                .ok()
+                .unwrap()
+        })
+        .for_each(|g| {
+            npm.add(g);
+        });
+    npm.build().unwrap()
 }
 
 fn is_ignored(ignored_dirs: &HashSet<String>, entry: &DirEntry) -> bool {
@@ -49,41 +143,36 @@ struct EcosystemPath {
     path: String,
 }
 
-fn find_targets(
-    mapping: HashMap<String, PackageEcosystem>,
-    ignored_dirs: HashSet<String>,
-    walk: WalkDir,
-    root: String,
-) -> Vec<FoundTarget> {
+fn find_targets(ignored_dirs: HashSet<String>, walk: WalkDir, root: String) -> Vec<FoundTarget> {
+    // .github/workflows/*.y{,a}ml has to be stripped to /
+    let gha_or_empty = |e, p: &str| {
+        if e == GithubActions || p.is_empty() {
+            MAIN_SEPARATOR.to_string()
+        } else {
+            p.to_string()
+        }
+    };
     let grouped = walk
         .follow_links(true)
         .into_iter()
         .filter_entry(|entry| !is_ignored(&ignored_dirs, entry))
         .filter_map(|entry| entry.ok())
-        .filter(|entry| is_target(&mapping, entry))
-        .map(|entry| {
-            let file_name = entry.file_name().to_str().map(String::from).unwrap();
-            let ecosystem = *mapping.get(&file_name).unwrap();
+        .filter_map(|entry| {
+            let ecosystem = find_ecosystem(entry.path(), &root)?; // Skip unknown paths
+            let file_name = entry.file_name().to_str().map(String::from)?;
             let path = entry
                 .path()
                 .to_path_buf()
                 .parent()
-                .map(|file_path: &Path| {
+                .and_then(|file_path: &Path| {
                     file_path
                         .strip_prefix(&root)
                         .expect("Couldn't strip prefix")
                         .to_str()
-                        .map_or(String::from(MAIN_SEPARATOR), String::from)
+                        .map(|p| gha_or_empty(ecosystem, p))
                 })
-                .map(|s| {
-                    if s.is_empty() {
-                        String::from(MAIN_SEPARATOR)
-                    } else {
-                        s
-                    }
-                })
-                .expect("should resolve parent");
-            (EcosystemPath { ecosystem, path }, file_name)
+                .unwrap_or_else(|| MAIN_SEPARATOR.to_string());
+            Some((EcosystemPath { ecosystem, path }, file_name))
         })
         .into_group_map_by(|a| a.0.clone());
     let mut found = Vec::new();
@@ -133,44 +222,8 @@ fn main() {
     let ignored_dirs = HashSet::from([".git", "target", "node_modules"].map(|s| s.to_string()));
     debug!("Ignoring {:?}", &ignored_dirs);
 
-    let mapping = HashMap::from(
-        [
-            ("package.json", PackageEcosystem::Npm),
-            ("package-lock.json", PackageEcosystem::Npm),
-            ("yarn.lock", PackageEcosystem::Npm),
-            ("Dockerfile", PackageEcosystem::Docker),
-            ("Cargo.toml", PackageEcosystem::Cargo),
-            ("requirements.in", PackageEcosystem::Pip),
-            ("requirements.txt", PackageEcosystem::Pip),
-            ("pyproject.toml", PackageEcosystem::Pip),
-            ("poetry.lock", PackageEcosystem::Pip),
-            ("Pipfile", PackageEcosystem::Pip),
-            ("Pipfile.lock", PackageEcosystem::Pip),
-            ("setup.py", PackageEcosystem::Pip),
-            ("Gemfile.lock", PackageEcosystem::Bundler),
-            ("Gemfile", PackageEcosystem::Bundler),
-            ("composer.json", PackageEcosystem::Composer),
-            ("composer.lock", PackageEcosystem::Composer),
-            ("mix.exs", PackageEcosystem::Hex),
-            ("mix.lock", PackageEcosystem::Hex),
-            ("build.gradle", PackageEcosystem::Gradle),
-            ("build.gradle.kts", PackageEcosystem::Gradle),
-            ("pom.xml", PackageEcosystem::Maven),
-            (".terraform.lock.hcl", PackageEcosystem::Terraform),
-            // ("pubspec.yaml", PackageEcosystem::Pub),
-            ("packages.config", PackageEcosystem::Nuget),
-            ("*.csproj", PackageEcosystem::Nuget), // TODO: make this work
-        ]
-        .map(|p| (p.0.to_string(), p.1)),
-    );
-
     let walk_dir = WalkDir::new(scanned_root);
-    let found = find_targets(
-        mapping,
-        ignored_dirs,
-        walk_dir,
-        scanned_directory.clone().unwrap(),
-    );
+    let found = find_targets(ignored_dirs, walk_dir, scanned_directory.clone().unwrap());
 
     if found.is_empty() {
         info!("Found no targets.");
@@ -231,9 +284,12 @@ fn found_values(found: &[FoundTarget]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::{find_targets, found_managers, found_values, is_ignored};
-    use dependabot_config::v2::PackageEcosystem::{Cargo, Npm};
-    use std::collections::{HashMap, HashSet};
+    use crate::{find_ecosystem, find_targets, found_managers, found_values, is_ignored};
+    use dependabot_config::v2::PackageEcosystem::{
+        Bundler, Cargo, Composer, Docker, Elm, GithubActions, Gitsubmodule, Gomod, Gradle, Hex,
+        Maven, Npm, Nuget, Pip, Pub, Swift, Terraform,
+    };
+    use std::collections::HashSet;
     use std::fs;
     use tempfile::tempdir;
     use walkdir::WalkDir;
@@ -251,19 +307,20 @@ mod tests {
 
     #[test]
     fn deduplication_and_sorting_test() {
-        let mapping = HashMap::from([
-            ("package.json".into(), Npm),
-            ("package-lock.json".into(), Npm),
-            ("Cargo.toml".into(), Cargo),
-        ]);
-
+        let files = [
+            "package.json",
+            "package-lock.json",
+            "Cargo.toml",
+            ".github/workflows/ci.yml",
+        ];
         let tmpdir = tempdir().expect("Couldn't create temp dir");
-        mapping
-            .keys()
-            .for_each(|f| fs::write(tmpdir.path().join(f), "").expect("Couldn't create file"));
+        files.iter().for_each(|f| {
+            let path = tmpdir.path().join(f);
+            fs::create_dir_all(&path.parent().expect("parent")).expect("created subdirs");
+            fs::write(&path, "").expect("Couldn't create file")
+        });
 
         let found = find_targets(
-            mapping,
             HashSet::new(),
             WalkDir::new(tmpdir.path()),
             tmpdir.path().to_str().unwrap().to_string(),
@@ -273,10 +330,61 @@ mod tests {
         let values = found_values(&found);
         assert_eq!(
             (
-                "cargo, npm",
-                "cargo: / (Cargo.toml)\nnpm: / (package-lock.json, package.json)"
+                "cargo, github-actions, npm",
+                "cargo: / (Cargo.toml)\ngithub-actions: / (ci.yml)\nnpm: / (package-lock.json, package.json)"
             ),
             (managers.as_str(), values.as_str())
         );
+    }
+
+    #[test]
+    fn find_ecosystem_test() {
+        #[rustfmt::skip]
+        let files = [
+            "unknown",
+            "a/Gemfile", "Gemfile.lock",
+            "a/Cargo.toml", "Cargo.lock",
+            "a/composer.json", "composer.lock",
+            "a/Dockerfile", "Dockerfile.alpine", "local.Dockerfile", "myDockerfile.alpine", "docker-compose.yml", "mydocker-compose.yml", "docker-compose-prod.yaml",
+            "a/elm.json",
+            ".gitmodules",
+            ".github/workflows/ci.yml",
+            "a/go.mod", "go.sum",
+            "a/build.gradle", "build.gradle.kts", "gradle.build", "settings.gradle",
+            "a/pom.xml",
+            "a/mix.exs", "mix.lock",
+            "a/package.json", "package-lock.json", "deno.lock", "yarn.lock", "pnpm-lock.yaml",
+            "a/b.csproj", "project.json", "packages.config",
+            "a/pyproject.toml", "setup.cfg", "setup.py", "requirements.in", "requirements-dev.in", "requirements.txt", "requirements-prod.txt", "poetry.lock", "Pipfile", "Pipfile.lock",
+            "a/pubspec.yaml", "pubspec.lock",
+            "a/Package.swift", "Package.resolved",
+            "a/main.tf", "variables.tf", "terraform.tfstate", ".terraform.lock.hcl",
+        ];
+        #[rustfmt::skip]
+        let expected = vec![
+            None,
+            Some(Bundler), Some(Bundler),
+            Some(Cargo), Some(Cargo),
+            Some(Composer), Some(Composer),
+            Some(Docker), Some(Docker), Some(Docker), Some(Docker), Some(Docker), Some(Docker), Some(Docker),
+            Some(Elm),
+            Some(Gitsubmodule),
+            Some(GithubActions),
+            Some(Gomod), Some(Gomod),
+            Some(Gradle), Some(Gradle), Some(Gradle), Some(Gradle),
+            Some(Maven),
+            Some(Hex), Some(Hex),
+            Some(Npm), Some(Npm), Some(Npm), Some(Npm), Some(Npm),
+            Some(Nuget), Some(Nuget), Some(Nuget),
+            Some(Pip), Some(Pip), Some(Pip), Some(Pip), Some(Pip), Some(Pip), Some(Pip), Some(Pip), Some(Pip), Some(Pip),
+            Some(Pub), Some(Pub),
+            Some(Swift), Some(Swift),
+            Some(Terraform), Some(Terraform), Some(Terraform), Some(Terraform)
+        ];
+        let results: Vec<_> = files
+            .into_iter()
+            .map(|f| find_ecosystem(f, &String::new()))
+            .collect();
+        assert_eq!(results, expected);
     }
 }
