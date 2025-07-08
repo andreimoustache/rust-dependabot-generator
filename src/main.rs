@@ -1,17 +1,16 @@
+use clap::Parser;
 use clap_verbosity_flag::{InfoLevel, Verbosity};
+use dependabot_config::v2::{Dependabot, PackageEcosystem, Schedule, Update};
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
+use itertools::Itertools;
 use log::{debug, error, info, warn};
 use std::path::MAIN_SEPARATOR_STR;
 use std::{
-    collections::{BTreeSet, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fs::{self},
     path::{Path, MAIN_SEPARATOR},
     sync::LazyLock,
 };
-
-use clap::Parser;
-use dependabot_config::v2::{Dependabot, PackageEcosystem, Schedule, Update};
-use itertools::Itertools;
 use walkdir::{DirEntry, WalkDir};
 use PackageEcosystem::{
     Bun, Bundler, Cargo, Composer, Devcontainers, Docker, DockerCompose, DotnetSdk, Elm,
@@ -141,11 +140,11 @@ fn is_ignored(ignored_dirs: &HashSet<String>, entry: &DirEntry) -> bool {
         .is_some_and(|s| ignored_dirs.contains(&s.to_string()))
 }
 
-/// Allow grouping of filenames, i.e. npm (package.json and yarn.lock)
+/// Allow grouping of directories and filenames, i.e. npm (package.json and yarn.lock)
 #[derive(Clone, Hash, Debug, PartialEq)]
 struct FoundTarget {
     ecosystem: PackageEcosystem,
-    path: String,
+    paths: Vec<String>,
     file_names: BTreeSet<String>,
 }
 
@@ -195,29 +194,38 @@ fn find_targets(ignored_dirs: HashSet<String>, walk: WalkDir, root: String) -> V
         })
         .into_group_map_by(|a| a.0.clone());
     let mut found = Vec::new();
+    let mut directories = HashMap::new();
     for (ecopath, groups) in grouped {
-        found.push(FoundTarget {
-            ecosystem: ecopath.ecosystem,
-            path: ecopath.path,
-            file_names: BTreeSet::from_iter(groups.iter().map(|p| p.1.clone())),
-        })
+        let file_names = BTreeSet::from_iter(groups.iter().map(|p| p.1.clone()));
+        directories
+            .entry(ecopath.ecosystem)
+            .or_insert_with(BTreeMap::new)
+            .insert(ecopath.path, file_names);
     }
-    // Sort by ecosystem first, then path. Files are already sorted.
-    found.sort_by(|a, b| {
-        a.ecosystem
-            .to_string()
-            .cmp(&b.ecosystem.to_string())
-            .then(a.path.cmp(&b.path))
-    });
+    for (ecosystem, paths) in directories {
+        found.push(FoundTarget {
+            ecosystem,
+            paths: paths.keys().cloned().collect(),
+            file_names: paths.values().flatten().cloned().collect(),
+        });
+    }
+    // Sort by ecosystem (paths and files are already sorted)
+    found.sort_by(|a, b| a.ecosystem.to_string().cmp(&b.ecosystem.to_string()));
     found
 }
 
 fn found_to_update(found_target: &FoundTarget) -> Update {
-    Update::new(
+    let mut u = Update::new(
         found_target.ecosystem,
-        found_target.path.clone(),
+        found_target.paths[0].clone(),
         Schedule::new(dependabot_config::v2::Interval::Weekly),
-    )
+    );
+    // Replace directory by directories for multiple paths
+    if found_target.paths.len() > 1 {
+        u.directory = None;
+        u.directories = Some(found_target.paths.clone());
+    }
+    u
 }
 
 fn main() {
@@ -287,13 +295,9 @@ fn found_values(found: &[FoundTarget]) -> String {
         .iter()
         .map(|f: &FoundTarget| {
             format!(
-                "{}: /{} ({})",
+                "{}: {} ({})",
                 f.ecosystem,
-                if f.path == MAIN_SEPARATOR.to_string() {
-                    String::new()
-                } else {
-                    f.path.clone()
-                },
+                f.paths.join(" "),
                 f.file_names.iter().join(", ")
             )
         })
@@ -303,12 +307,16 @@ fn found_values(found: &[FoundTarget]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::{find_ecosystem, find_targets, found_managers, found_values, is_ignored};
+    use crate::{
+        find_ecosystem, find_targets, found_managers, found_to_update, found_values, is_ignored,
+    };
+    use dependabot_config::v2::Dependabot;
     use dependabot_config::v2::PackageEcosystem::{
         Bun, Bundler, Cargo, Composer, Devcontainers, Docker, DockerCompose, DotnetSdk, Elm,
         GithubActions, Gitsubmodule, Gomod, Gradle, Helm, Maven, Mix, Npm, Nuget, Pip, Pub, Swift,
         Terraform, Uv,
     };
+    use indoc::indoc;
     use std::collections::HashSet;
     use std::fs;
     use tempfile::tempdir;
@@ -327,9 +335,12 @@ mod tests {
 
     #[test]
     fn deduplication_and_sorting_test() {
+        #[rustfmt::skip]
         let files = [
-            "package.json",
-            "package-lock.json",
+            "ui/package.json", "ui/package-lock.json",
+            "server/setup.py", "server/pyproject.toml",
+            "cli/pyproject.toml",
+            ".devcontainer/devcontainer.json", ".devcontainer/subfolder/devcontainer-lock.json",
             "Cargo.toml",
             ".github/workflows/ci.yml",
         ];
@@ -349,12 +360,49 @@ mod tests {
         let managers = found_managers(&found);
         let values = found_values(&found);
         assert_eq!(
-            (
-                "cargo, github-actions, npm",
-                "cargo: / (Cargo.toml)\ngithub-actions: / (ci.yml)\nnpm: / (package-lock.json, package.json)"
-            ),
-            (managers.as_str(), values.as_str())
+            "cargo, devcontainers, github-actions, npm, pip",
+            managers.as_str()
         );
+        assert_eq!(
+            indoc! {"cargo: / (Cargo.toml)
+devcontainers: / (devcontainer-lock.json, devcontainer.json)
+github-actions: / (ci.yml)
+npm: ui (package-lock.json, package.json)
+pip: cli server (pyproject.toml, setup.py)"},
+            values.as_str()
+        );
+
+        let updates = found.iter().map(found_to_update).collect();
+        let dependabot_config: Dependabot = Dependabot::new(updates);
+        assert_eq!(
+            indoc! {"version: 2
+updates:
+- package-ecosystem: cargo
+  directory: /
+  schedule:
+    interval: weekly
+- package-ecosystem: devcontainers
+  directory: /
+  schedule:
+    interval: weekly
+- package-ecosystem: github-actions
+  directory: /
+  schedule:
+    interval: weekly
+- package-ecosystem: npm
+  directory: ui
+  schedule:
+    interval: weekly
+- package-ecosystem: pip
+  directories:
+  - cli
+  - server
+  schedule:
+    interval: weekly
+" }
+            .to_string(),
+            dependabot_config.to_string()
+        )
     }
 
     #[test]
