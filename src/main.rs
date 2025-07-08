@@ -1,6 +1,7 @@
 use clap_verbosity_flag::{InfoLevel, Verbosity};
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use log::{debug, error, info, warn};
+use std::path::MAIN_SEPARATOR_STR;
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
     fs::{self},
@@ -13,22 +14,28 @@ use dependabot_config::v2::{Dependabot, PackageEcosystem, Schedule, Update};
 use itertools::Itertools;
 use walkdir::{DirEntry, WalkDir};
 use PackageEcosystem::{
-    Bundler, Cargo, Composer, Docker, Elm, GithubActions, Gitsubmodule, Gomod, Gradle, Hex, Maven,
-    Npm, Nuget, Pip, Pub, Swift, Terraform,
+    Bun, Bundler, Cargo, Composer, Devcontainers, Docker, DockerCompose, DotnetSdk, Elm,
+    GithubActions, Gitsubmodule, Gomod, Gradle, Helm, Maven, Mix, Npm, Nuget, Pip, Pub, Swift,
+    Terraform, Uv,
 };
 
 static ECOSYSTEMS: LazyLock<HashMap<PackageEcosystem, GlobSet>> = LazyLock::new(|| {
     HashMap::from([
+        (Bun, patterns_to_globset(&PATTERNS_BUN)),
         (Bundler, patterns_to_globset(&PATTERNS_BUNDLER)),
         (Cargo, patterns_to_globset(&PATTERNS_CARGO)),
         (Composer, patterns_to_globset(&PATTERNS_COMPOSER)),
+        (Devcontainers, patterns_to_globset(&PATTERNS_DEVCONTAINERS)),
         (Docker, patterns_to_globset(&PATTERNS_DOCKER)),
-        (Hex, patterns_to_globset(&PATTERNS_HEX)),
+        (DockerCompose, patterns_to_globset(&PATTERNS_DOCKER_COMPOSE)),
+        (DotnetSdk, patterns_to_globset(&PATTERNS_DOTNET_SDK)),
+        (Mix, patterns_to_globset(&PATTERNS_MIX)),
         (Elm, patterns_to_globset(&PATTERNS_ELM)),
         (Gitsubmodule, patterns_to_globset(&PATTERNS_GITSUBMODULES)),
         (GithubActions, patterns_to_globset(&PATTERNS_GITHUBACTIONS)),
         (Gomod, patterns_to_globset(&PATTERNS_GOMOD)),
         (Gradle, patterns_to_globset(&PATTERNS_GRADLE)),
+        (Helm, patterns_to_globset(&PATTERNS_HELM)),
         (Maven, patterns_to_globset(&PATTERNS_MAVEN)),
         (Npm, patterns_to_globset(&PATTERNS_NPM)),
         (Nuget, patterns_to_globset(&PATTERNS_NUGET)),
@@ -36,15 +43,20 @@ static ECOSYSTEMS: LazyLock<HashMap<PackageEcosystem, GlobSet>> = LazyLock::new(
         (Pub, patterns_to_globset(&PATTERNS_PUB)),
         (Swift, patterns_to_globset(&PATTERNS_SWIFT)),
         (Terraform, patterns_to_globset(&PATTERNS_TERRAFORM)),
+        (Uv, patterns_to_globset(&PATTERNS_UV)),
     ])
 });
 
 // Globs are defined in each FileFetcher class:
 // https://github.com/dependabot/dependabot-core/blob/HEAD/helm/lib/dependabot/helm/file_fetcher.rb#L9
+const PATTERNS_BUN: [&str; 1] = ["bun.lock"];
 const PATTERNS_BUNDLER: [&str; 1] = ["Gemfile{,.lock}"];
 const PATTERNS_CARGO: [&str; 1] = ["Cargo.{toml,lock}"];
 const PATTERNS_COMPOSER: [&str; 1] = ["composer.{json,lock}"];
-const PATTERNS_DOCKER: [&str; 2] = ["*Dockerfile*", "*docker-compose*.y{,a}ml"];
+const PATTERNS_DEVCONTAINERS: [&str; 1] = ["{,.}devcontainer{,-lock}.json"];
+const PATTERNS_DOCKER: [&str; 1] = ["*Dockerfile*"];
+const PATTERNS_DOCKER_COMPOSE: [&str; 1] = ["*docker-compose*.y{,a}ml"];
+const PATTERNS_DOTNET_SDK: [&str; 1] = ["global.json"];
 const PATTERNS_ELM: [&str; 1] = ["elm.json"];
 const PATTERNS_GITSUBMODULES: [&str; 1] = [".gitmodules"];
 const PATTERNS_GITHUBACTIONS: [&str; 1] = [".github/workflows/*.y{,a}ml"]; // path separators!
@@ -54,13 +66,12 @@ const PATTERNS_GRADLE: [&str; 3] = [
     "gradle.build", // (older versions)
     "settings.gradle",
 ];
-#[allow(dead_code)]
 const PATTERNS_HELM: [&str; 1] = [
     // "*.y{,a}ml", // doesn't really make sense to allow any YAML file
     "Chart.lock",
 ];
 const PATTERNS_MAVEN: [&str; 1] = ["pom.xml"];
-const PATTERNS_HEX: [&str; 1] = ["mix.{exs,lock}"]; // Elixir
+const PATTERNS_MIX: [&str; 1] = ["mix.{exs,lock}"]; // Elixir
 const PATTERNS_NPM: [&str; 3] = ["package{,-lock}.json", "{deno,yarn}.lock", "pnpm-lock.yaml"];
 const PATTERNS_NUGET: [&str; 3] = [
     "*.csproj",
@@ -81,6 +92,7 @@ const PATTERNS_TERRAFORM: [&str; 3] = [
     "terraform.tfstate",
     ".terraform.lock.hcl", // hidden file!
 ];
+const PATTERNS_UV: [&str; 1] = ["uv.lock"];
 
 #[derive(Parser)]
 #[clap(author, version, about, long_about = None)]
@@ -145,8 +157,15 @@ struct EcosystemPath {
 
 fn find_targets(ignored_dirs: HashSet<String>, walk: WalkDir, root: String) -> Vec<FoundTarget> {
     // .github/workflows/*.y{,a}ml has to be stripped to /
+    // https://containers.dev/guide/dependabot
+    // .devcontainer/{,subfolder/}devcontainer{,-lock}.json should be stripped to /
     let gha_or_empty = |e, p: &str| {
-        if e == GithubActions || p.is_empty() {
+        if p.is_empty()
+            || e == GithubActions
+            || (e == Devcontainers
+                && (p == ".devcontainer"
+                    || p.starts_with(&(".devcontainer".to_owned() + MAIN_SEPARATOR_STR))))
+        {
             MAIN_SEPARATOR.to_string()
         } else {
             p.to_string()
@@ -217,7 +236,7 @@ fn main() {
         .join(".github")
         .join("dependabot.yaml");
 
-    info!("Scanning directory {}.", scanned_directory.clone().unwrap());
+    info!("Scanning directory {}", scanned_directory.clone().unwrap());
 
     let ignored_dirs = HashSet::from([".git", "target", "node_modules"].map(|s| s.to_string()));
     debug!("Ignoring {:?}", &ignored_dirs);
@@ -286,8 +305,9 @@ fn found_values(found: &[FoundTarget]) -> String {
 mod tests {
     use crate::{find_ecosystem, find_targets, found_managers, found_values, is_ignored};
     use dependabot_config::v2::PackageEcosystem::{
-        Bundler, Cargo, Composer, Docker, Elm, GithubActions, Gitsubmodule, Gomod, Gradle, Hex,
-        Maven, Npm, Nuget, Pip, Pub, Swift, Terraform,
+        Bun, Bundler, Cargo, Composer, Devcontainers, Docker, DockerCompose, DotnetSdk, Elm,
+        GithubActions, Gitsubmodule, Gomod, Gradle, Helm, Maven, Mix, Npm, Nuget, Pip, Pub, Swift,
+        Terraform, Uv,
     };
     use std::collections::HashSet;
     use std::fs;
@@ -342,15 +362,20 @@ mod tests {
         #[rustfmt::skip]
         let files = [
             "unknown",
+            "a/bun.lock",
             "a/Gemfile", "Gemfile.lock",
             "a/Cargo.toml", "Cargo.lock",
             "a/composer.json", "composer.lock",
-            "a/Dockerfile", "Dockerfile.alpine", "local.Dockerfile", "myDockerfile.alpine", "docker-compose.yml", "mydocker-compose.yml", "docker-compose-prod.yaml",
+            "a/devcontainer.json", ".devcontainer.json", ".devcontainer-lock.json",
+            "a/Dockerfile", "Dockerfile.alpine", "local.Dockerfile", "myDockerfile.alpine",
+            "a/docker-compose.yml", "mydocker-compose.yml", "docker-compose-prod.yaml",
+            "a/global.json",
             "a/elm.json",
             ".gitmodules",
             ".github/workflows/ci.yml",
             "a/go.mod", "go.sum",
             "a/build.gradle", "build.gradle.kts", "gradle.build", "settings.gradle",
+            "a/Chart.lock",
             "a/pom.xml",
             "a/mix.exs", "mix.lock",
             "a/package.json", "package-lock.json", "deno.lock", "yarn.lock", "pnpm-lock.yaml",
@@ -359,27 +384,34 @@ mod tests {
             "a/pubspec.yaml", "pubspec.lock",
             "a/Package.swift", "Package.resolved",
             "a/main.tf", "variables.tf", "terraform.tfstate", ".terraform.lock.hcl",
+            "a/uv.lock",
         ];
         #[rustfmt::skip]
         let expected = vec![
             None,
+            Some(Bun),
             Some(Bundler), Some(Bundler),
             Some(Cargo), Some(Cargo),
             Some(Composer), Some(Composer),
-            Some(Docker), Some(Docker), Some(Docker), Some(Docker), Some(Docker), Some(Docker), Some(Docker),
+            Some(Devcontainers), Some(Devcontainers), Some(Devcontainers),
+            Some(Docker), Some(Docker), Some(Docker), Some(Docker),
+            Some(DockerCompose), Some(DockerCompose), Some(DockerCompose),
+            Some(DotnetSdk),
             Some(Elm),
             Some(Gitsubmodule),
             Some(GithubActions),
             Some(Gomod), Some(Gomod),
             Some(Gradle), Some(Gradle), Some(Gradle), Some(Gradle),
+            Some(Helm),
             Some(Maven),
-            Some(Hex), Some(Hex),
+            Some(Mix), Some(Mix),
             Some(Npm), Some(Npm), Some(Npm), Some(Npm), Some(Npm),
             Some(Nuget), Some(Nuget), Some(Nuget),
             Some(Pip), Some(Pip), Some(Pip), Some(Pip), Some(Pip), Some(Pip), Some(Pip), Some(Pip), Some(Pip), Some(Pip),
             Some(Pub), Some(Pub),
             Some(Swift), Some(Swift),
-            Some(Terraform), Some(Terraform), Some(Terraform), Some(Terraform)
+            Some(Terraform), Some(Terraform), Some(Terraform), Some(Terraform),
+            Some(Uv)
         ];
         let results: Vec<_> = files
             .into_iter()

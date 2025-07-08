@@ -10,11 +10,16 @@ things are hardcoded :ok_hand:, but it provides at least a starting point for a 
 
 # Usage
 
-`cargo run ~/workspace/rust-dependabot-generator`
+```shell
+dependabot-generator .
+``
 
 ```
-Scanning directory ~/rust-dependabot-generator.
-Found package managers: cargo.
+Scanning directory .
+Found package managers cargo, docker, github-actions:
+    cargo: / (Cargo.lock, Cargo.toml)
+    docker: / (Dockerfile)
+    github-actions: / (ci.yaml, release.yaml)
 ```
 
 The program will write the dependabot `yaml` file to disk.
