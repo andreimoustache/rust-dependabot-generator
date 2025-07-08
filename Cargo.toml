@@ -19,5 +19,7 @@ clap = { version = "4.5.40", features = ["derive"] }
 walkdir = { version = "2.3" }
 dependabot-config = "0.3"
 env_logger = "0.11"
+itertools = "0.14.0"
 log = "0.4"
 clap-verbosity-flag = "3.0.3"
+tempfile = "3.20.0"

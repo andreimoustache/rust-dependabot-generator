@@ -1,13 +1,14 @@
 use clap_verbosity_flag::{InfoLevel, Verbosity};
 use log::{debug, error, info, warn};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
     fs::{self},
     path::{Path, MAIN_SEPARATOR},
 };
 
 use clap::Parser;
 use dependabot_config::v2::{Dependabot, PackageEcosystem, Schedule, Update};
+use itertools::Itertools;
 use walkdir::{DirEntry, WalkDir};
 
 #[derive(Parser)]
@@ -34,11 +35,18 @@ fn is_ignored(ignored_dirs: &HashSet<String>, entry: &DirEntry) -> bool {
         .is_some_and(|s| ignored_dirs.contains(&s.to_string()))
 }
 
-#[derive(Clone)]
+/// Allow grouping of filenames, i.e. npm (package.json and yarn.lock)
+#[derive(Clone, Hash, Debug, PartialEq)]
 struct FoundTarget {
-    ecosystem: Option<PackageEcosystem>,
-    path: Option<String>,
-    file_name: Option<String>,
+    ecosystem: PackageEcosystem,
+    path: String,
+    file_names: BTreeSet<String>,
+}
+
+#[derive(Clone, Eq, PartialEq, Hash, Debug)]
+struct EcosystemPath {
+    ecosystem: PackageEcosystem,
+    path: String,
 }
 
 fn find_targets(
@@ -47,41 +55,59 @@ fn find_targets(
     walk: WalkDir,
     root: String,
 ) -> Vec<FoundTarget> {
-    walk.follow_links(true)
+    let grouped = walk
+        .follow_links(true)
         .into_iter()
         .filter_entry(|entry| !is_ignored(&ignored_dirs, entry))
         .filter_map(|entry| entry.ok())
         .filter(|entry| is_target(&mapping, entry))
         .map(|entry| {
-            let file_name = entry.file_name().to_str().map(String::from);
-            let ecosystem = Some(*mapping.get(&file_name.clone().unwrap()).unwrap());
-            let path = entry.path().to_path_buf().parent().map(|file_path: &Path| {
-                file_path
-                    .strip_prefix(&root)
-                    .expect("Couldn't strip prefix")
-                    .to_str()
-                    .map_or(String::from(MAIN_SEPARATOR), String::from)
-            });
-
-            let path = if path == Some(String::from("")) {
-                Some(String::from(MAIN_SEPARATOR))
-            } else {
-                path
-            };
-
-            FoundTarget {
-                file_name,
-                path,
-                ecosystem,
-            }
+            let file_name = entry.file_name().to_str().map(String::from).unwrap();
+            let ecosystem = *mapping.get(&file_name).unwrap();
+            let path = entry
+                .path()
+                .to_path_buf()
+                .parent()
+                .map(|file_path: &Path| {
+                    file_path
+                        .strip_prefix(&root)
+                        .expect("Couldn't strip prefix")
+                        .to_str()
+                        .map_or(String::from(MAIN_SEPARATOR), String::from)
+                })
+                .map(|s| {
+                    if s.is_empty() {
+                        String::from(MAIN_SEPARATOR)
+                    } else {
+                        s
+                    }
+                })
+                .expect("should resolve parent");
+            (EcosystemPath { ecosystem, path }, file_name)
         })
-        .collect()
+        .into_group_map_by(|a| a.0.clone());
+    let mut found = Vec::new();
+    for (ecopath, groups) in grouped {
+        found.push(FoundTarget {
+            ecosystem: ecopath.ecosystem,
+            path: ecopath.path,
+            file_names: BTreeSet::from_iter(groups.iter().map(|p| p.1.clone())),
+        })
+    }
+    // Sort by ecosystem first, then path. Files are already sorted.
+    found.sort_by(|a, b| {
+        a.ecosystem
+            .to_string()
+            .cmp(&b.ecosystem.to_string())
+            .then(a.path.cmp(&b.path))
+    });
+    found
 }
 
 fn found_to_update(found_target: &FoundTarget) -> Update {
     Update::new(
-        found_target.ecosystem.unwrap().to_owned(),
-        found_target.path.as_ref().unwrap().to_string(),
+        found_target.ecosystem,
+        found_target.path.clone(),
         Schedule::new(dependabot_config::v2::Interval::Weekly),
     )
 }
@@ -151,15 +177,9 @@ fn main() {
         std::process::exit(0);
     }
 
-    info!(
-        "Found package managers: {}.",
-        found
-            .clone()
-            .into_iter()
-            .map(|f| format!("found {} in {}", f.file_name.unwrap(), f.path.unwrap()))
-            .collect::<Vec<String>>()
-            .join(", ")
-    );
+    let managers = found_managers(&found);
+    let values = found_values(&found);
+    info!("Found package managers {managers}:\n{values}");
 
     let updates = found.iter().map(found_to_update).collect();
     let dependabot_config: Dependabot = Dependabot::new(updates);
@@ -181,10 +201,41 @@ fn main() {
     info!("Done!");
 }
 
+fn found_managers(found: &[FoundTarget]) -> String {
+    found
+        .iter()
+        .map(|p| p.ecosystem.to_string())
+        .unique()
+        .collect::<Vec<String>>()
+        .join(", ")
+}
+
+fn found_values(found: &[FoundTarget]) -> String {
+    found
+        .iter()
+        .map(|f: &FoundTarget| {
+            format!(
+                "{}: /{} ({})",
+                f.ecosystem,
+                if f.path == MAIN_SEPARATOR.to_string() {
+                    String::new()
+                } else {
+                    f.path.clone()
+                },
+                f.file_names.iter().join(", ")
+            )
+        })
+        .collect::<Vec<String>>()
+        .join("\n")
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::is_ignored;
-    use std::collections::HashSet;
+    use crate::{find_targets, found_managers, found_values, is_ignored};
+    use dependabot_config::v2::PackageEcosystem::{Cargo, Npm};
+    use std::collections::{HashMap, HashSet};
+    use std::fs;
+    use tempfile::tempdir;
     use walkdir::WalkDir;
 
     #[test]
@@ -196,5 +247,36 @@ mod tests {
         {
             assert!(is_ignored(&ignored, &entry));
         }
+    }
+
+    #[test]
+    fn deduplication_and_sorting_test() {
+        let mapping = HashMap::from([
+            ("package.json".into(), Npm),
+            ("package-lock.json".into(), Npm),
+            ("Cargo.toml".into(), Cargo),
+        ]);
+
+        let tmpdir = tempdir().expect("Couldn't create temp dir");
+        mapping
+            .keys()
+            .for_each(|f| fs::write(tmpdir.path().join(f), "").expect("Couldn't create file"));
+
+        let found = find_targets(
+            mapping,
+            HashSet::new(),
+            WalkDir::new(tmpdir.path()),
+            tmpdir.path().to_str().unwrap().to_string(),
+        );
+
+        let managers = found_managers(&found);
+        let values = found_values(&found);
+        assert_eq!(
+            (
+                "cargo, npm",
+                "cargo: / (Cargo.toml)\nnpm: / (package-lock.json, package.json)"
+            ),
+            (managers.as_str(), values.as_str())
+        );
     }
 }
